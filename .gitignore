@@ -9,7 +9,10 @@ __pycache__
 *.gif
 *.webm
 checkpoints/*
+!checkpoints/.gitkeep
 results/*
 temp/*
 segments.txt
 .DS_Store
+.idea
+venv*

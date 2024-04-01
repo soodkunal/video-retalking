@@ -43,6 +43,7 @@ class NetworkSize(Enum):
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
+
 class FaceAlignment:
     def __init__(self, landmarks_type, network_size=NetworkSize.LARGE,
                  device='cuda', flip_input=False, face_detector='sfd', verbose=False):
@@ -53,8 +54,12 @@ class FaceAlignment:
 
         network_size = int(network_size)
 
-        if 'cuda' in device:
-            torch.backends.cudnn.benchmark = True
+        if isinstance(device, str):
+            if 'cuda' in device:
+                torch.backends.cudnn.benchmark = True
+        elif isinstance(device, torch.device):
+            if 'cuda' in device.type:
+                torch.backends.cudnn.benchmark = True
 
         # Get the face detector
         face_detector_module = __import__('face_detection.detection.' + face_detector,

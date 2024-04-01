@@ -25,9 +25,9 @@ class RetinaFaceDetection(object):
         self.cfg = cfg_re50
         self.net = RetinaFace(cfg=self.cfg, phase='test')
         self.load_model()
-        self.net = self.net.to(device)
+        self.net = self.net.to(self.device)
 
-        self.mean = torch.tensor([[[[104]], [[117]], [[123]]]]).to(device)
+        self.mean = torch.tensor([[[[104]], [[117]], [[123]]]]).to(self.device)
 
     def check_keys(self, pretrained_state_dict):
         ckpt_keys = set(pretrained_state_dict.keys())
@@ -48,7 +48,7 @@ class RetinaFaceDetection(object):
         #    pretrained_dict = torch.load(self.pretrained_path, map_location=lambda storage, loc: storage)
         #else:
         #    pretrained_dict = torch.load(self.pretrained_path, map_location=lambda storage, loc: storage.cuda())
-        pretrained_dict = torch.load(self.pretrained_path, map_location=torch.device('cpu'))
+        pretrained_dict = torch.load(self.pretrained_path, map_location=self.device)
         if "state_dict" in pretrained_dict.keys():
             pretrained_dict = self.remove_prefix(pretrained_dict['state_dict'], 'module.')
         else:

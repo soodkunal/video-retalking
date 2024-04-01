@@ -12,6 +12,7 @@ import torch.nn.functional as F
 from face_parse.model import BiSeNet
 import torchvision.transforms as transforms
 
+
 class FaceParse(object):
     def __init__(self, base_dir='./', model='ParseNet-latest', device='cuda', mask_map = [0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0]):
         self.mfile = os.path.join(base_dir, model+'.pth')
@@ -36,7 +37,7 @@ class FaceParse(object):
 
     def load_model(self):
         self.faceparse = ParseNet(self.size, self.size, 32, 64, 19, norm_type='bn', relu_type='LeakyReLU', ch_range=[32, 256])
-        self.faceparse.load_state_dict(torch.load(self.mfile, map_location=torch.device('cpu')))
+        self.faceparse.load_state_dict(torch.load(self.mfile, map_location=self.device))
         self.faceparse.to(self.device)
         self.faceparse.eval()
 
@@ -64,8 +65,10 @@ class FaceParse(object):
     def img2tensor(self, img):
         img = img[..., ::-1] # BGR to RGB
         img = img / 255. * 2 - 1
-        img_tensor = torch.from_numpy(img.transpose(2, 0, 1)).unsqueeze(0).to(self.device)
-        return img_tensor.float()
+        img_tensor = torch.from_numpy(img.transpose(2, 0, 1)).unsqueeze(0)
+        if self.device == 'mps':
+            return img_tensor.to(torch.float32).to(self.device)
+        return img_tensor.float().to(self.device)
 
     def tenor2mask(self, tensor, masks):
         if len(tensor.shape) < 4:

@@ -12,16 +12,19 @@ from itertools import cycle
 
 from torch.multiprocessing import Pool, Process, set_start_method
 
+from utils.inference_utils import detect_device_type
+
+
 class KeypointExtractor():
     def __init__(self):
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        device = detect_device_type()
         self.detector = face_alignment.FaceAlignment(face_alignment.LandmarksType._2D, device=device)   
 
     def extract_keypoint(self, images, name=None, info=True):
         if isinstance(images, list):
             keypoints = []
             if info:
-                i_range = tqdm(images,desc='landmark Det:')
+                i_range = tqdm(images, desc='landmark Det:')
             else:
                 i_range = images
 
