@@ -1,3 +1,5 @@
+import warnings
+
 import numpy as np
 import cv2, os, sys, subprocess, platform, torch
 from tqdm import tqdm
@@ -21,33 +23,36 @@ from third_part.ganimation_replicate.model.ganimation import GANimationModel
 from utils import audio
 from utils.ffhq_preprocess import Croper
 from utils.alignment_stit import crop_faces, calc_alignment_coefficients, paste_image
-from utils.inference_utils import Laplacian_Pyramid_Blending_with_mask, face_detect, load_model, options, split_coeff, \
-                                  trans_image, transform_semantic, find_crop_norm_ratio, load_face3d_net, exp_aus_dict
-import warnings
+from utils.inference_utils import (
+    Laplacian_Pyramid_Blending_with_mask, face_detect, load_model, options, split_coeff,
+    trans_image, transform_semantic, find_crop_norm_ratio, load_face3d_net, exp_aus_dict, detect_device_type,
+)
+
 warnings.filterwarnings("ignore")
 
-args = options()
+cmd_args = options()
+
 
 def main():    
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = detect_device_type()
     print('[Info] Using {} for inference.'.format(device))
-    os.makedirs(os.path.join('temp', args.tmp_dir), exist_ok=True)
+    os.makedirs(os.path.join('temp', cmd_args.tmp_dir), exist_ok=True)
 
-    enhancer = FaceEnhancement(base_dir='checkpoints', size=512, model='GPEN-BFR-512', use_sr=False, \
+    enhancer = FaceEnhancement(base_dir='checkpoints', size=512, model='GPEN-BFR-512', use_sr=False,
                                sr_model='rrdb_realesrnet_psnr', channel_multiplier=2, narrow=1, device=device)
-    restorer = GFPGANer(model_path='checkpoints/GFPGANv1.3.pth', upscale=1, arch='clean', \
+    restorer = GFPGANer(model_path='checkpoints/GFPGANv1.3.pth', upscale=1, arch='clean',
                         channel_multiplier=2, bg_upsampler=None)
 
-    base_name = args.face.split('/')[-1]
-    if os.path.isfile(args.face) and args.face.split('.')[1] in ['jpg', 'png', 'jpeg']:
-        args.static = True
-    if not os.path.isfile(args.face):
+    base_name = cmd_args.face.split('/')[-1]
+    if os.path.isfile(cmd_args.face) and cmd_args.face.split('.')[1] in ['jpg', 'png', 'jpeg']:
+        cmd_args.static = True
+    if not os.path.isfile(cmd_args.face):
         raise ValueError('--face argument must be a valid path to video/image file')
-    elif args.face.split('.')[1] in ['jpg', 'png', 'jpeg']:
-        full_frames = [cv2.imread(args.face)]
-        fps = args.fps
+    elif cmd_args.face.split('.')[1] in ['jpg', 'png', 'jpeg']:
+        full_frames = [cv2.imread(cmd_args.face)]
+        fps = cmd_args.fps
     else:
-        video_stream = cv2.VideoCapture(args.face)
+        video_stream = cv2.VideoCapture(cmd_args.face)
         fps = video_stream.get(cv2.CAP_PROP_FPS)
 
         full_frames = []
@@ -56,13 +61,13 @@ def main():
             if not still_reading:
                 video_stream.release()
                 break
-            y1, y2, x1, x2 = args.crop
+            y1, y2, x1, x2 = cmd_args.crop
             if x2 == -1: x2 = frame.shape[1]
             if y2 == -1: y2 = frame.shape[0]
             frame = frame[y1:y2, x1:x2]
             full_frames.append(frame)
 
-    print ("[Step 0] Number of frames available for inference: "+str(len(full_frames)))
+    print("[Step 0] Number of frames available for inference: "+str(len(full_frames)))
     # face detection & cropping, cropping the first frame as the style of FFHQ
     croper = Croper('checkpoints/shape_predictor_68_face_landmarks.dat')
     full_frames_RGB = [cv2.cvtColor(frame, cv2.COLOR_BGR2RGB) for frame in full_frames]
@@ -76,7 +81,7 @@ def main():
     frames_pil = [Image.fromarray(cv2.resize(frame,(256,256))) for frame in full_frames_RGB]
 
     # get the landmark according to the detected face.
-    if not os.path.isfile('temp/'+base_name+'_landmarks.txt') or args.re_preprocess:
+    if not os.path.isfile('temp/'+base_name+'_landmarks.txt') or cmd_args.re_preprocess:
         print('[Step 1] Landmarks Extraction in Video.')
         kp_extractor = KeypointExtractor()
         lm = kp_extractor.extract_keypoint(frames_pil, './temp/'+base_name+'_landmarks.txt')
@@ -85,8 +90,8 @@ def main():
         lm = np.loadtxt('temp/'+base_name+'_landmarks.txt').astype(np.float32)
         lm = lm.reshape([len(full_frames), -1, 2])
        
-    if not os.path.isfile('temp/'+base_name+'_coeffs.npy') or args.exp_img is not None or args.re_preprocess:
-        net_recon = load_face3d_net(args.face3d_net_path, device)
+    if not os.path.isfile('temp/'+base_name+'_coeffs.npy') or cmd_args.exp_img is not None or cmd_args.re_preprocess:
+        net_recon = load_face3d_net(cmd_args.face3d_net_path, device)
         lm3d_std = load_lm3d('checkpoints/BFM')
 
         video_coeffs = []
@@ -107,7 +112,7 @@ def main():
                 coeffs = split_coeff(net_recon(im_idx_tensor))
 
             pred_coeff = {key:coeffs[key].cpu().numpy() for key in coeffs}
-            pred_coeff = np.concatenate([pred_coeff['id'], pred_coeff['exp'], pred_coeff['tex'], pred_coeff['angle'],\
+            pred_coeff = np.concatenate([pred_coeff['id'], pred_coeff['exp'], pred_coeff['tex'], pred_coeff['angle'],
                                          pred_coeff['gamma'], pred_coeff['trans'], trans_params[None]], 1)
             video_coeffs.append(pred_coeff)
         semantic_npy = np.array(video_coeffs)[:,0]
@@ -117,9 +122,9 @@ def main():
         semantic_npy = np.load('temp/'+base_name+'_coeffs.npy').astype(np.float32)
 
     # generate the 3dmm coeff from a single image
-    if args.exp_img is not None and ('.png' in args.exp_img or '.jpg' in args.exp_img):
-        print('extract the exp from',args.exp_img)
-        exp_pil = Image.open(args.exp_img).convert('RGB')
+    if cmd_args.exp_img is not None and ('.png' in cmd_args.exp_img or '.jpg' in cmd_args.exp_img):
+        print('extract the exp from',cmd_args.exp_img)
+        exp_pil = Image.open(cmd_args.exp_img).convert('RGB')
         lm3d_std = load_lm3d('third_part/face3d/BFM')
         
         W, H = exp_pil.size
@@ -138,19 +143,19 @@ def main():
         with torch.no_grad():
             expression = split_coeff(net_recon(im_exp_tensor))['exp'][0]
         del net_recon
-    elif args.exp_img == 'smile':
+    elif cmd_args.exp_img == 'smile':
         expression = torch.tensor(loadmat('checkpoints/expression.mat')['expression_mouth'])[0]
     else:
         print('using expression center')
         expression = torch.tensor(loadmat('checkpoints/expression.mat')['expression_center'])[0]
 
     # load DNet, model(LNet and ENet)
-    D_Net, model = load_model(args, device)
+    D_Net, model = load_model(cmd_args, device)
 
-    if not os.path.isfile('temp/'+base_name+'_stablized.npy') or args.re_preprocess:
+    if not os.path.isfile('temp/'+base_name+'_stablized.npy') or cmd_args.re_preprocess:
         imgs = []
         for idx in tqdm(range(len(frames_pil)), desc="[Step 3] Stabilize the expression In Video:"):
-            if args.one_shot:
+            if cmd_args.one_shot:
                 source_img = trans_image(frames_pil[0]).unsqueeze(0).to(device)
                 semantic_source_numpy = semantic_npy[0:1]
             else:
@@ -170,13 +175,16 @@ def main():
     else:
         print('[Step 3] Using saved stabilized video.')
         imgs = np.load('temp/'+base_name+'_stablized.npy')
-    torch.cuda.empty_cache()
+    if 'mps' in device:
+        torch.mps.empty_cache()
+    else:
+        torch.cuda.empty_cache()
 
-    if not args.audio.endswith('.wav'):
-        command = 'ffmpeg -loglevel error -y -i {} -strict -2 {}'.format(args.audio, 'temp/{}/temp.wav'.format(args.tmp_dir))
+    if not cmd_args.audio.endswith('.wav'):
+        command = 'ffmpeg -loglevel error -y -i {} -strict -2 {}'.format(cmd_args.audio, 'temp/{}/temp.wav'.format(cmd_args.tmp_dir))
         subprocess.call(command, shell=True)
-        args.audio = 'temp/{}/temp.wav'.format(args.tmp_dir)
-    wav = audio.load_wav(args.audio, 16000)
+        cmd_args.audio = 'temp/{}/temp.wav'.format(cmd_args.tmp_dir)
+    wav = audio.load_wav(cmd_args.audio, 16000)
     mel = audio.melspectrogram(wav)
     if np.isnan(mel.reshape(-1)).sum() > 0:
         raise ValueError('Mel contains nan! Using a TTS voice? Add a small epsilon noise to the wav file and try again')
@@ -200,18 +208,18 @@ def main():
         img = imgs[idx]
         pred, _, _ = enhancer.process(img, img, face_enhance=True, possion_blending=False)
         imgs_enhanced.append(pred)
-    gen = datagen(imgs_enhanced.copy(), mel_chunks, full_frames, None, (oy1,oy2,ox1,ox2))
+    gen = datagen(imgs_enhanced.copy(), mel_chunks, full_frames, None, (oy1,oy2,ox1,ox2), device=device)
 
     frame_h, frame_w = full_frames[0].shape[:-1]
-    out = cv2.VideoWriter('temp/{}/result.mp4'.format(args.tmp_dir), cv2.VideoWriter_fourcc(*'mp4v'), fps, (frame_w, frame_h))
+    out = cv2.VideoWriter('temp/{}/result.mp4'.format(cmd_args.tmp_dir), cv2.VideoWriter_fourcc(*'mp4v'), fps, (frame_w, frame_h))
     
-    if args.up_face != 'original':
+    if cmd_args.up_face != 'original':
         instance = GANimationModel()
         instance.initialize()
         instance.setup()
 
     kp_extractor = KeypointExtractor()
-    for i, (img_batch, mel_batch, frames, coords, img_original, f_frames) in enumerate(tqdm(gen, desc='[Step 6] Lip Synthesis:', total=int(np.ceil(float(len(mel_chunks)) / args.LNet_batch_size)))):
+    for i, (img_batch, mel_batch, frames, coords, img_original, f_frames) in enumerate(tqdm(gen, desc='[Step 6] Lip Synthesis:', total=int(np.ceil(float(len(mel_chunks)) / cmd_args.LNet_batch_size)))):
         img_batch = torch.FloatTensor(np.transpose(img_batch, (0, 3, 1, 2))).to(device)
         mel_batch = torch.FloatTensor(np.transpose(mel_batch, (0, 3, 1, 2))).to(device)
         img_original = torch.FloatTensor(np.transpose(img_original, (0, 3, 1, 2))).to(device)/255. # BGR -> RGB
@@ -221,12 +229,12 @@ def main():
             pred, low_res = model(mel_batch, img_batch, reference)
             pred = torch.clamp(pred, 0, 1)
 
-            if args.up_face in ['sad', 'angry', 'surprise']:
-                tar_aus = exp_aus_dict[args.up_face]
+            if cmd_args.up_face in ['sad', 'angry', 'surprise']:
+                tar_aus = exp_aus_dict[cmd_args.up_face]
             else:
                 pass
             
-            if args.up_face == 'original':
+            if cmd_args.up_face == 'original':
                 cur_gen_faces = img_original
             else:
                 test_batch = {'src_img': torch.nn.functional.interpolate((img_original * 2 - 1), size=(128, 128), mode='bilinear'), 
@@ -235,7 +243,7 @@ def main():
                 instance.forward()
                 cur_gen_faces = torch.nn.functional.interpolate(instance.fake_img / 2. + 0.5, size=(384, 384), mode='bilinear')
                 
-            if args.without_rl1 is not False:
+            if cmd_args.without_rl1 is not False:
                 incomplete, reference = torch.split(img_batch, 3, dim=1)
                 mask = torch.where(incomplete==0, torch.ones_like(incomplete), torch.zeros_like(incomplete)) 
                 pred = pred * mask + cur_gen_faces * (1 - mask) 
@@ -268,17 +276,17 @@ def main():
             out.write(pp)
     out.release()
     
-    if not os.path.isdir(os.path.dirname(args.outfile)):
-        os.makedirs(os.path.dirname(args.outfile), exist_ok=True)
-    command = 'ffmpeg -loglevel error -y -i {} -i {} -strict -2 -q:v 1 {}'.format(args.audio, 'temp/{}/result.mp4'.format(args.tmp_dir), args.outfile)
+    if not os.path.isdir(os.path.dirname(cmd_args.outfile)):
+        os.makedirs(os.path.dirname(cmd_args.outfile), exist_ok=True)
+    command = 'ffmpeg -loglevel error -y -i {} -i {} -strict -2 -q:v 1 {}'.format(cmd_args.audio, 'temp/{}/result.mp4'.format(cmd_args.tmp_dir), cmd_args.outfile)
     subprocess.call(command, shell=platform.system() != 'Windows')
-    print('outfile:', args.outfile)
+    print('outfile:', cmd_args.outfile)
 
 
 # frames:256x256, full_frames: original size
-def datagen(frames, mels, full_frames, frames_pil, cox):
+def datagen(frames, mels, full_frames, frames_pil, cox, *, device):
     img_batch, mel_batch, frame_batch, coords_batch, ref_batch, full_frame_batch = [], [], [], [], [], []
-    base_name = args.face.split('/')[-1]
+    base_name = cmd_args.face.split('/')[-1]
     refs = []
     image_size = 256 
 
@@ -292,7 +300,7 @@ def datagen(frames, mels, full_frames, frames_pil, cox):
     del kp_extractor.detector
 
     oy1,oy2,ox1,ox2 = cox
-    face_det_results = face_detect(full_frames, args, jaw_correction=True)
+    face_det_results = face_detect(full_frames, cmd_args, jaw_correction=True, device=device)
 
     for inverse_transform, crop, full_frame, face_det in zip(inverse_transforms, crops, full_frames, face_det_results):
         imc_pil = paste_image(inverse_transform, crop, Image.fromarray(
@@ -305,13 +313,13 @@ def datagen(frames, mels, full_frames, frames_pil, cox):
         refs.append(ff[y1: y2, x1:x2])
 
     for i, m in enumerate(mels):
-        idx = 0 if args.static else i % len(frames)
+        idx = 0 if cmd_args.static else i % len(frames)
         frame_to_save = frames[idx].copy()
         face = refs[idx]
         oface, coords = face_det_results[idx].copy()
 
-        face = cv2.resize(face, (args.img_size, args.img_size))
-        oface = cv2.resize(oface, (args.img_size, args.img_size))
+        face = cv2.resize(face, (cmd_args.img_size, cmd_args.img_size))
+        oface = cv2.resize(oface, (cmd_args.img_size, cmd_args.img_size))
 
         img_batch.append(oface)
         ref_batch.append(face) 
@@ -320,11 +328,11 @@ def datagen(frames, mels, full_frames, frames_pil, cox):
         frame_batch.append(frame_to_save)
         full_frame_batch.append(full_frames[idx].copy())
 
-        if len(img_batch) >= args.LNet_batch_size:
+        if len(img_batch) >= cmd_args.LNet_batch_size:
             img_batch, mel_batch, ref_batch = np.asarray(img_batch), np.asarray(mel_batch), np.asarray(ref_batch)
             img_masked = img_batch.copy()
             img_original = img_batch.copy()
-            img_masked[:, args.img_size//2:] = 0
+            img_masked[:, cmd_args.img_size//2:] = 0
             img_batch = np.concatenate((img_masked, ref_batch), axis=3) / 255.
             mel_batch = np.reshape(mel_batch, [len(mel_batch), mel_batch.shape[1], mel_batch.shape[2], 1])
 
@@ -335,7 +343,7 @@ def datagen(frames, mels, full_frames, frames_pil, cox):
         img_batch, mel_batch, ref_batch = np.asarray(img_batch), np.asarray(mel_batch), np.asarray(ref_batch)
         img_masked = img_batch.copy()
         img_original = img_batch.copy()
-        img_masked[:, args.img_size//2:] = 0
+        img_masked[:, cmd_args.img_size//2:] = 0
         img_batch = np.concatenate((img_masked, ref_batch), axis=3) / 255.
         mel_batch = np.reshape(mel_batch, [len(mel_batch), mel_batch.shape[1], mel_batch.shape[2], 1])
         yield img_batch, mel_batch, frame_batch, coords_batch, img_original, full_frame_batch

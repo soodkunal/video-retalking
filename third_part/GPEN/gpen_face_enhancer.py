@@ -2,7 +2,6 @@ import cv2
 import numpy as np
 
 ######### face enhancement
-from face_parse.face_parsing import FaceParse
 from face_detect.retinaface_detection import RetinaFaceDetection
 from face_parse.face_parsing import FaceParse
 from face_model.face_gan import FaceGAN

@@ -5,6 +5,8 @@ import numpy as np
 import torch
 import cv2
 
+logger = logging.getLogger(__name__)
+
 
 class FaceDetector(object):
     """An abstract class representing a face detector.
@@ -16,18 +18,21 @@ class FaceDetector(object):
     """
 
     def __init__(self, device, verbose):
+        if isinstance(device, torch.device):
+            device = device.type
         self.device = device
         self.verbose = verbose
 
-        if verbose:
-            if 'cpu' in device:
-                logger = logging.getLogger(__name__)
-                logger.warning("Detection running on CPU, this may be potentially slow.")
-
-        if 'cpu' not in device and 'cuda' not in device:
+        if verbose and 'cpu' in device:
+            logger.warning("Detection running on CPU, this may be potentially slow.")
+        valid_device_types = ('mps', 'cpu', 'cuda')
+        for x in valid_device_types:
+            if x in device:
+                break
+        else:
             if verbose:
-                logger.error("Expected values for device are: {cpu, cuda} but got: %s", device)
-            raise ValueError
+                logger.error(f"Expected values for device are: {','.join(valid_device_types)} but got: {device}")
+            raise ValueError(f'Unexpected device: {device}')
 
     def detect_from_image(self, tensor_or_path):
         """Detects faces in a given image.

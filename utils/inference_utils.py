@@ -105,10 +105,10 @@ def get_smoothened_boxes(boxes, T):
         boxes[i] = np.mean(window, axis=0)
     return boxes
 
-def face_detect(images, args, jaw_correction=False, detector=None):
-    if detector == None:
-        device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-        detector = face_detection.FaceAlignment(face_detection.LandmarksType._2D, 
+
+def face_detect(images, args, jaw_correction=False, detector=None, *, device):
+    if detector is None:
+        detector = face_detection.FaceAlignment(face_detection.LandmarksType._2D,
                                                 flip_input=False, device=device)
 
     batch_size = args.face_det_batch_size    
@@ -251,3 +251,12 @@ def load_face3d_net(ckpt_path, device):
     net_recon.load_state_dict(checkpoint['net_recon'])
     net_recon.eval()
     return net_recon
+
+
+def detect_device_type() -> str:
+    if torch.cuda.is_available():
+        return 'cuda'
+    if hasattr(torch.backends, 'mps'):
+        if torch.backends.mps.is_available():
+            return 'mps'
+    return 'cpu'

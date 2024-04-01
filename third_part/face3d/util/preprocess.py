@@ -1,6 +1,7 @@
 """
 This script contains the image preprocessing code for Deep3DFaceRecon_pytorch
 """
+from typing import Iterable
 
 import numpy as np
 from scipy.io import loadmat
@@ -193,7 +194,16 @@ def align_img(img, lm, lm3D, mask=None, target_size=224., rescale_factor=102.):
 
     # processing the image
     img_new, lm_new, mask_new = resize_n_crop_img(img, lm, t, s, target_size=target_size, mask=mask)
-    trans_params = np.array([w0, h0, s, t[0], t[1]])
+    # RFE: For some reason, during the test, the `t` is two dimensions array like array([[x], [x]], dtype=float)
+    if t[0] and isinstance(t[0], Iterable):
+        t0 = t[0][0]
+    else:
+        t0 = t[0]
+    if t[1] and isinstance(t[1], Iterable):
+        t1 = t[1][0]
+    else:
+        t1 = t[1]
+    trans_params = np.array([w0, h0, s, t0, t1])
 
     return trans_params, img_new, lm_new, mask_new
 
